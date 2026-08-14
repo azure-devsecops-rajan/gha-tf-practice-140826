@@ -105,12 +105,13 @@ jobs:
         with:
           terraform_version: 1.6.6
 
-      - name: Download plan artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: tfplan-${{ matrix.environment }}
-          path: ./plans
-        if: always()
+      # - name: Download plan artifact
+      #   uses: actions/download-artifact@v4
+      #   with:
+      #     name: tfplan-${{ matrix.environment }}
+      #     path: ./plans
+      #   continue-on-error: true
+      #   if: always()
 
       - name: Azure Login
         uses: azure/login@v2
