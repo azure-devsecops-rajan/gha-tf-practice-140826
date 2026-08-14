@@ -99,7 +99,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Scan repository for secrets (gitleaks)
-        uses: zricethezav/gitleaks-action@v8
+        uses: zricethezav/gitleaks-action@v7
         with:
           args: '--redact --exit-code 1'
 
