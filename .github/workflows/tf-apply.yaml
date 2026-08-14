@@ -142,7 +142,7 @@ jobs:
 
       - name: Run TFLint
         run: |
-          tflint --init || true
+          tflint --init
           tflint
 
       - name: Terraform plan
