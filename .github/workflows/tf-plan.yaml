@@ -98,8 +98,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -112,21 +110,14 @@ jobs:
           tenant-id: ${{ secrets.ARM_TENANT_ID }}
           subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
 
-      - name: Terraform init with remote backend (inputs)
+      - name: Terraform init
         shell: bash
         run: |
-          cat > backend.tf <<EOF
-          terraform {
-            backend "azurerm" {
-              resource_group_name  = "${{ github.event.inputs.backend_rg }}"
-              storage_account_name = "${{ github.event.inputs.backend_sa }}"
-              container_name       = "${{ github.event.inputs.backend_container }}"
-              key                  = "${{ github.event.inputs.backend_key }}"
-            }
-          }
-          EOF
-
-          terraform init
+          terraform init \
+            -backend-config="resource_group_name=${{ github.event.inputs.backend_rg }}" \
+            -backend-config="storage_account_name=${{ github.event.inputs.backend_sa }}" \
+            -backend-config="container_name=${{ github.event.inputs.backend_container }}" \
+            -backend-config="key=${{ github.event.inputs.backend_key }}"
 
       - name: Terraform validate
         run: terraform validate
@@ -137,8 +128,3 @@ jobs:
             -var-file="tfvars/${{ matrix.tfvars_file }}" \
             -out="tfplan-${{ matrix.environment }}.tfplan"
 
-      - name: Upload plan artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan-${{ matrix.environment }}
-          path: tfplan-${{ matrix.environment }}.tfplan
