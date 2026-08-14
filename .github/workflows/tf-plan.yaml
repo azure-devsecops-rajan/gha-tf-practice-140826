@@ -47,7 +47,7 @@ on:
         description: "Terraform state file key (for example: dev.terraform.tfstate)"
         required: true
         type: string
-        default: dev.terraform.tfvars
+        default: dev.terraform.tfstate
 
 permissions:
   id-token: write
