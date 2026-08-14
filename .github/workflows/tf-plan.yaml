@@ -1,0 +1,142 @@
+name: Terraform Plan (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Select environment to run"
+        required: true
+        type: choice
+        default: dev
+        options:
+          - dev
+          - prod
+          - qa
+          - stage
+
+      tfvars_file:
+        description: "Select tfvars file to use"
+        required: true
+        type: choice
+        default: dev.tfvars
+        options:
+          - dev.tfvars
+          - prod.tfvars
+          - qa.tfvars
+          - stage.tfvars
+
+      backend_rg:
+        description: "Backend resource group name"
+        required: true
+        type: string
+        default: tfstate-rg
+
+      backend_sa:
+        description: "Backend storage account name"
+        required: true
+        type: string
+        default: tfstatestgact321
+
+      backend_container:
+        description: "Backend container name"
+        required: true
+        type: string
+        default: tfstate
+
+      backend_key:
+        description: "Terraform state file key (for example: dev.terraform.tfstate)"
+        required: true
+        type: string
+        default: dev.terraform.tfvars
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TF_CLI_ARGS: "-no-color"
+  ARM_USE_OIDC: "true"
+  ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+jobs:
+  set-matrix:
+    name: Build target matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Determine selected environment
+        id: matrix
+        shell: bash
+        run: |
+          ENV_SELECTED="${{ github.event.inputs.environment }}"
+          TFVARS_SELECTED="${{ github.event.inputs.tfvars_file }}"
+
+          case "$ENV_SELECTED" in
+            dev) tfvars="dev.tfvars" ;;
+            prod) tfvars="prod.tfvars" ;;
+            qa) tfvars="qa.tfvars" ;;
+            stage) tfvars="stage.tfvars" ;;
+            *) echo "Unsupported environment: $ENV_SELECTED"; exit 1 ;;
+          esac
+
+          JSON="[{\"environment\":\"$ENV_SELECTED\",\"tfvars_file\":\"$tfvars\"}]"
+          echo "matrix=${JSON}" >> "$GITHUB_OUTPUT"
+
+  terraform-plan:
+    name: Terraform Plan (${{ matrix.environment }})
+    needs: set-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.set-matrix.outputs.matrix) }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.ARM_CLIENT_ID }}
+          tenant-id: ${{ secrets.ARM_TENANT_ID }}
+          subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+      - name: Terraform init with remote backend (inputs)
+        shell: bash
+        run: |
+          cat > backend.tf <<EOF
+          terraform {
+            backend "azurerm" {
+              resource_group_name  = "${{ github.event.inputs.backend_rg }}"
+              storage_account_name = "${{ github.event.inputs.backend_sa }}"
+              container_name       = "${{ github.event.inputs.backend_container }}"
+              key                  = "${{ github.event.inputs.backend_key }}"
+            }
+          }
+          EOF
+
+          terraform init
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        run: |
+          terraform plan \
+            -var-file="tfvars/${{ matrix.tfvars_file }}" \
+            -out="tfplan-${{ matrix.environment }}.tfplan"
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ matrix.environment }}
+          path: tfplan-${{ matrix.environment }}.tfplan
