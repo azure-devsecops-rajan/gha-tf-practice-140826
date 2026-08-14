@@ -103,7 +103,7 @@ jobs:
           mkdir -p reports
           docker run --rm -v "${{ github.workspace }}":/src ghcr.io/gitleaks/gitleaks:v8.24.2 \
             dir /src --no-banner --redact --exit-code 1 \
-            --report-format=sarif --report-path=reports/gitleaks.sarif
+            --report-format=sarif --report-path=/src/reports/gitleaks.sarif
 
       - name: Upload gitleaks SARIF
         uses: actions/upload-artifact@v4
