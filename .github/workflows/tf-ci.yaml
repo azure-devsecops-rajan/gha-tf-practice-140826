@@ -119,6 +119,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Debug workflow source
+        if: always()
+        shell: bash
+        run: |
+          echo "Repository: $GITHUB_REPOSITORY"
+          echo "Ref: $GITHUB_REF"
+          echo "Commit: $GITHUB_SHA"
+          echo "Workflow: $GITHUB_WORKFLOW"
+          echo "Run number: $GITHUB_RUN_NUMBER"
+          echo "Searching workflow files for auth-type..."
+          grep -Rni "auth-type" .github/workflows || true
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -130,7 +142,6 @@ jobs:
           client-id: ${{ secrets.ARM_CLIENT_ID }}
           tenant-id: ${{ secrets.ARM_TENANT_ID }}
           subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-          auth-type: oidc
 
       - name: Terraform init with remote backend
         shell: bash
@@ -194,6 +205,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Debug workflow source
+        if: always()
+        shell: bash
+        run: |
+          echo "Repository: $GITHUB_REPOSITORY"
+          echo "Ref: $GITHUB_REF"
+          echo "Commit: $GITHUB_SHA"
+          echo "Workflow: $GITHUB_WORKFLOW"
+          echo "Run number: $GITHUB_RUN_NUMBER"
+          echo "Searching workflow files for auth-type..."
+          grep -Rni "auth-type" .github/workflows || true
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -212,7 +235,6 @@ jobs:
           client-id: ${{ secrets.ARM_CLIENT_ID }}
           tenant-id: ${{ secrets.ARM_TENANT_ID }}
           subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
-          auth-type: oidc
 
       - name: Terraform init with remote backend
         shell: bash
