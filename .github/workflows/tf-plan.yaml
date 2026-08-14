@@ -109,6 +109,7 @@ jobs:
           client-id: ${{ secrets.ARM_CLIENT_ID }}
           tenant-id: ${{ secrets.ARM_TENANT_ID }}
           subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          auth-type: oidc
 
       - name: Terraform init with remote backend (inputs)
         shell: bash
