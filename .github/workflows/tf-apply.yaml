@@ -112,6 +112,20 @@ jobs:
           tenant-id: ${{ secrets.ARM_TENANT_ID }}
           subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
 
+      - name: Diagnostic: storage account and container state
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Checking storage account and container before terraform init"
+          echo "Storage Account: ${{ github.event.inputs.backend_sa }}"
+          echo "Resource Group: ${{ github.event.inputs.backend_rg }}"
+          echo "Container: ${{ github.event.inputs.backend_container }}"
+          az storage account show -n "${{ github.event.inputs.backend_sa }}" -g "${{ github.event.inputs.backend_rg }}" -o table || true
+          echo "Container show:" 
+          az storage container show --account-name "${{ github.event.inputs.backend_sa }}" --name "${{ github.event.inputs.backend_container }}" --auth-mode login -o json || echo "container-not-found"
+          echo "Listing blobs (if any):"
+          az storage blob list --account-name "${{ github.event.inputs.backend_sa }}" --container-name "${{ github.event.inputs.backend_container }}" --auth-mode login --output table || true
+
       - name: Terraform init
         shell: bash
         run: |
