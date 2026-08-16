@@ -14,16 +14,7 @@ on:
           - qa
           - stage
 
-      tfvars_file:
-        description: "Select tfvars file to use"
-        required: true
-        type: choice
-        default: dev.tfvars
-        options:
-          - dev.tfvars
-          - prod.tfvars
-          - qa.tfvars
-          - stage.tfvars
+      # tfvars_file is derived from the selected environment
 
       backend_rg:
         description: "Backend resource group name"
@@ -66,7 +57,6 @@ jobs:
         shell: bash
         run: |
           ENV_SELECTED="${{ github.event.inputs.environment }}"
-          TFVARS_SELECTED="${{ github.event.inputs.tfvars_file }}"
 
           case "$ENV_SELECTED" in
             dev) tfvars="dev.tfvars"; backend_key="dev.terraform.tfstate" ;;
