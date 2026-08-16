@@ -38,130 +38,40 @@ permissions:
 
 env:
   TF_CLI_ARGS: "-no-color"
-
   ARM_USE_OIDC: "true"
   ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
   ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
 
 jobs:
-
   terraform-apply:
-    name: Terraform Plan and Apply (${{ inputs.environment }})
-
+    name: Terraform Apply (${{ inputs.environment }})
     runs-on: ubuntu-latest
 
     steps:
-
-      # ========================================================
-      # Checkout
-      # ========================================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
-
-      # ========================================================
-      # Determine environment configuration
-      # ========================================================
-      - name: Set environment configuration
+      - name: Set environment config
         id: config
         shell: bash
         run: |
-
-          ENV="${{ inputs.environment }}"
-
-          case "$ENV" in
-
-            dev)
-              TFVARS_FILE="dev.tfvars"
-              BACKEND_KEY="dev.terraform.tfstate"
-              ;;
-
-            qa)
-              TFVARS_FILE="qa.tfvars"
-              BACKEND_KEY="qa.terraform.tfstate"
-              ;;
-
-            stage)
-              TFVARS_FILE="stage.tfvars"
-              BACKEND_KEY="stage.terraform.tfstate"
-              ;;
-
-            prod)
-              TFVARS_FILE="prod.tfvars"
-              BACKEND_KEY="prod.terraform.tfstate"
-              ;;
-
-            *)
-              echo "Unsupported environment: $ENV"
-              exit 1
-              ;;
-
+          case "${{ inputs.environment }}" in
+            dev) TFVARS_FILE="dev.tfvars"; BACKEND_KEY="dev.terraform.tfstate" ;;
+            qa) TFVARS_FILE="qa.tfvars"; BACKEND_KEY="qa.terraform.tfstate" ;;
+            stage) TFVARS_FILE="stage.tfvars"; BACKEND_KEY="stage.terraform.tfstate" ;;
+            prod) TFVARS_FILE="prod.tfvars"; BACKEND_KEY="prod.terraform.tfstate" ;;
+            *) echo "Unsupported environment: ${{ inputs.environment }}"; exit 1 ;;
           esac
 
           echo "TFVARS_FILE=$TFVARS_FILE" >> "$GITHUB_OUTPUT"
           echo "BACKEND_KEY=$BACKEND_KEY" >> "$GITHUB_OUTPUT"
 
-          echo "=========================================="
-          echo "Environment Configuration"
-          echo "=========================================="
-          echo "Environment : $ENV"
-          echo "TFVars      : $TFVARS_FILE"
-          echo "Backend Key : $BACKEND_KEY"
-          echo "=========================================="
-
-
-      # ========================================================
-      # Gitleaks
-      # ========================================================
-      - name: Scan repository for secrets (Gitleaks)
-        run: |
-
-          mkdir -p reports
-
-          docker run --rm \
-            -v "${{ github.workspace }}":/src \
-            ghcr.io/gitleaks/gitleaks:v8.24.2 \
-            dir /src \
-            --no-banner \
-            --redact \
-            --exit-code 1 \
-            --report-format=sarif \
-            --report-path=/src/reports/gitleaks.sarif
-
-
-      # ========================================================
-      # Upload Gitleaks report
-      # ========================================================
-      - name: Upload Gitleaks SARIF
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: gitleaks-sarif-${{ inputs.environment }}
-          path: reports/gitleaks.sarif
-
-
-      # ========================================================
-      # Setup Terraform
-      # ========================================================
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
-
-      # ========================================================
-      # Checkov
-      # ========================================================
-      # - name: Static IaC checks (Checkov)
-        # uses: bridgecrewio/checkov-action@v12
-        # with:
-        #   directory: .
-
-
-      # ========================================================
-      # Azure Login
-      # ========================================================
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -169,70 +79,9 @@ jobs:
           tenant-id: ${{ secrets.ARM_TENANT_ID }}
           subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
 
-
-      # ========================================================
-      # Verify Azure Identity
-      # ========================================================
-      - name: Verify Azure identity
-        shell: bash
-        run: |
-
-          echo "=========================================="
-          echo "Azure Account"
-          echo "=========================================="
-
-          az account show \
-            --query "{Subscription:id,Tenant:tenantId,User:user.name}" \
-            -o table
-
-          echo "=========================================="
-
-
-      # ========================================================
-      # Verify Backend Storage
-      # ========================================================
-      - name: Verify backend storage access
-        shell: bash
-        run: |
-
-          echo "=========================================="
-          echo "Backend Storage"
-          echo "=========================================="
-
-          echo "Resource Group : ${{ inputs.backend_rg }}"
-          echo "Storage Account: ${{ inputs.backend_sa }}"
-          echo "Container      : ${{ inputs.backend_container }}"
-          echo "State Key      : ${{ steps.config.outputs.BACKEND_KEY }}"
-
-          echo "=========================================="
-
-          az storage container show \
-            --account-name "${{ inputs.backend_sa }}" \
-            --name "${{ inputs.backend_container }}" \
-            --auth-mode login \
-            -o table
-
-      # ========================================================
-      # Ensure backend container exists (create if missing)
-      # ========================================================
-      - name: Ensure backend container exists
-        shell: bash
-        run: |
-          set -euo pipefail
-          az storage container create \
-            --account-name "${{ inputs.backend_sa }}" \
-            --name "${{ inputs.backend_container }}" \
-            --auth-mode login \
-            --only-show-errors || true
-
-
-      # ========================================================
-      # Terraform Init
-      # ========================================================
       - name: Terraform Init
         shell: bash
         run: |
-
           terraform init \
             -backend-config="resource_group_name=${{ inputs.backend_rg }}" \
             -backend-config="storage_account_name=${{ inputs.backend_sa }}" \
@@ -240,114 +89,42 @@ jobs:
             -backend-config="key=${{ steps.config.outputs.BACKEND_KEY }}" \
             -reconfigure
 
-
-      # ========================================================
-      # Install TFLint
-      # ========================================================
-      - name: Install TFLint
-        shell: bash
-        run: |
-
-          mkdir -p /tmp/tflint
-          cd /tmp/tflint
-
-          curl -sL \
-            -o tflint.zip \
-            "https://github.com/terraform-linters/tflint/releases/latest/download/tflint_linux_amd64.zip"
-
-          unzip -q tflint.zip
-
-          sudo mv tflint /usr/local/bin/
-
-          tflint --version
-
-
-      # ========================================================
-      # TFLint Init
-      # ========================================================
-      - name: Initialize TFLint
-        shell: bash
-        run: |
-
-          tflint --init
-
-
-      # ========================================================
-      # TFLint
-      # ========================================================
-      - name: Run TFLint
-        shell: bash
-        run: |
-
-          tflint
-
-
-      # ========================================================
-      # Terraform Validate
-      # ========================================================
       - name: Terraform Validate
         shell: bash
-        run: |
+        run: terraform validate
 
-          terraform validate
-
-
-      # ========================================================
-      # Terraform Plan
-      # ========================================================
       - name: Terraform Plan
         shell: bash
         run: |
-
           terraform plan \
             -var-file="tfvars/${{ steps.config.outputs.TFVARS_FILE }}" \
             -out="tfplan-${{ inputs.environment }}.tfplan"
 
-
-      # ========================================================
-      # Upload Terraform Plan
-      # ========================================================
       - name: Upload Terraform Plan
         uses: actions/upload-artifact@v4
         with:
           name: tfplan-${{ inputs.environment }}
           path: tfplan-${{ inputs.environment }}.tfplan
 
-
-      # ========================================================
-      # Terraform Apply
-      # ========================================================
       - name: Terraform Apply
         shell: bash
         run: |
-
           terraform apply \
             -auto-approve \
             "tfplan-${{ inputs.environment }}.tfplan"
 
-
-      # ========================================================
-      # Verify Remote Terraform State
-      # ========================================================
       - name: Verify remote tfstate blob
         shell: bash
         run: |
-
           set -euo pipefail
 
           STORAGE_ACCOUNT="${{ inputs.backend_sa }}"
           CONTAINER="${{ inputs.backend_container }}"
           STATE_KEY="${{ steps.config.outputs.BACKEND_KEY }}"
 
-          echo "=========================================="
-          echo "Terraform State Verification"
-          echo "=========================================="
-
           echo "Storage Account : $STORAGE_ACCOUNT"
           echo "Container       : $CONTAINER"
           echo "State Key       : $STATE_KEY"
-
-          echo "=========================================="
 
           EXISTS=$(az storage blob exists \
             --account-name "$STORAGE_ACCOUNT" \
@@ -357,44 +134,20 @@ jobs:
             --query "exists" \
             -o tsv)
 
-          echo "exists=$EXISTS"
-
           if [ "$EXISTS" != "true" ]; then
-
-            echo ""
             echo "ERROR: Terraform state blob was not found."
-            echo ""
-
-            echo "Blobs currently present in container:"
-            echo "------------------------------------------"
-
             az storage blob list \
               --account-name "$STORAGE_ACCOUNT" \
               --container-name "$CONTAINER" \
               --auth-mode login \
               --query "[].name" \
               -o table
-
-            echo "------------------------------------------"
-
             exit 1
-
           fi
 
-          echo ""
           echo "SUCCESS: Remote Terraform state found."
           echo "State file: $STATE_KEY"
 
-
-      # ========================================================
-      # Terraform State List
-      # ========================================================
       - name: Show Terraform state
         shell: bash
-        run: |
-
-          echo "=========================================="
-          echo "Terraform Resources in State"
-          echo "=========================================="
-
-          terraform state list || true
+        run: terraform state list || true

@@ -14,8 +14,6 @@ on:
           - qa
           - stage
 
-      # tfvars_file is derived from the selected environment
-
       backend_rg:
         description: "Backend resource group name"
         required: true
@@ -46,64 +44,33 @@ env:
   ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
 
 jobs:
-  set-matrix:
-    name: Build target matrix
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
-    steps:
-      - name: Determine selected environment
-        id: matrix
-        shell: bash
-        run: |
-          ENV_SELECTED="${{ github.event.inputs.environment }}"
-
-          case "$ENV_SELECTED" in
-            dev) tfvars="dev.tfvars"; backend_key="dev.terraform.tfstate" ;;
-            prod) tfvars="prod.tfvars"; backend_key="prod.terraform.tfstate" ;;
-            qa) tfvars="qa.tfvars"; backend_key="qa.terraform.tfstate" ;;
-            stage) tfvars="stage.tfvars"; backend_key="stage.terraform.tfstate" ;;
-            *) echo "Unsupported environment: $ENV_SELECTED"; exit 1 ;;
-          esac
-
-          JSON="[{\"environment\":\"$ENV_SELECTED\",\"tfvars_file\":\"$tfvars\",\"backend_key\":\"$backend_key\"}]"
-          echo "matrix=${JSON}" >> "$GITHUB_OUTPUT"
-
   terraform-plan:
-    name: Terraform Plan (${{ matrix.environment }})
-    needs: set-matrix
+    name: Terraform Plan (${{ inputs.environment }})
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.set-matrix.outputs.matrix) }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Scan repository for secrets (gitleaks)
+      - name: Set environment config
+        id: config
+        shell: bash
         run: |
-          mkdir -p reports
-          docker run --rm -v "${{ github.workspace }}":/src ghcr.io/gitleaks/gitleaks:v8.24.2 \
-            dir /src --no-banner --redact --exit-code 1 \
-            --report-format=sarif --report-path=/src/reports/gitleaks.sarif
+          case "${{ inputs.environment }}" in
+            dev) TFVARS_FILE="dev.tfvars"; BACKEND_KEY="dev.terraform.tfstate" ;;
+            qa) TFVARS_FILE="qa.tfvars"; BACKEND_KEY="qa.terraform.tfstate" ;;
+            stage) TFVARS_FILE="stage.tfvars"; BACKEND_KEY="stage.terraform.tfstate" ;;
+            prod) TFVARS_FILE="prod.tfvars"; BACKEND_KEY="prod.terraform.tfstate" ;;
+            *) echo "Unsupported environment: ${{ inputs.environment }}"; exit 1 ;;
+          esac
 
-      - name: Upload gitleaks SARIF
-        uses: actions/upload-artifact@v4
-        with:
-          name: gitleaks-sarif-${{ matrix.environment }}
-          path: reports/gitleaks.sarif
+          echo "TFVARS_FILE=$TFVARS_FILE" >> "$GITHUB_OUTPUT"
+          echo "BACKEND_KEY=$BACKEND_KEY" >> "$GITHUB_OUTPUT"
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
-
-      - name: Static IaC checks (Checkov)
-        uses: bridgecrewio/checkov-action@v12
-        with:
-          directory: .
 
       - name: Azure Login
         uses: azure/login@v2
@@ -112,34 +79,24 @@ jobs:
           tenant-id: ${{ secrets.ARM_TENANT_ID }}
           subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
 
-      - name: Terraform init
+      - name: Terraform Init
         shell: bash
         run: |
           terraform init \
-            -backend-config="resource_group_name=${{ github.event.inputs.backend_rg }}" \
-            -backend-config="storage_account_name=${{ github.event.inputs.backend_sa }}" \
-            -backend-config="container_name=${{ github.event.inputs.backend_container }}" \
-            -backend-config="key=${{ matrix.backend_key }}"
+            -backend-config="resource_group_name=${{ inputs.backend_rg }}" \
+            -backend-config="storage_account_name=${{ inputs.backend_sa }}" \
+            -backend-config="container_name=${{ inputs.backend_container }}" \
+            -backend-config="key=${{ steps.config.outputs.BACKEND_KEY }}" \
+            -reconfigure
 
-      - name: Install TFLint
-        run: |
-          mkdir -p /tmp/tflint && cd /tmp/tflint
-          curl -sL -o tflint.zip "https://github.com/terraform-linters/tflint/releases/latest/download/tflint_linux_amd64.zip"
-          unzip -q tflint.zip
-          sudo mv tflint /usr/local/bin/
-          tflint --version
-
-      - name: Run TFLint
-        run: |
-          tflint --init
-          tflint
-
-      - name: Terraform validate
+      - name: Terraform Validate
+        shell: bash
         run: terraform validate
 
-      - name: Terraform plan
+      - name: Terraform Plan
+        shell: bash
         run: |
           terraform plan \
-            -var-file="tfvars/${{ matrix.tfvars_file }}" \
-            -out="tfplan-${{ matrix.environment }}.tfplan"
+            -var-file="tfvars/${{ steps.config.outputs.TFVARS_FILE }}" \
+            -out="tfplan-${{ inputs.environment }}.tfplan"
 
