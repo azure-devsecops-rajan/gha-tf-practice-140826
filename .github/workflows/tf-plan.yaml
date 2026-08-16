@@ -30,7 +30,7 @@ on:
         description: "Backend container name"
         required: true
         type: string
-        default: tfstate1
+        default: tfstate
 
 permissions:
   id-token: write

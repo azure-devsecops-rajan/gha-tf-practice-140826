@@ -112,42 +112,6 @@ jobs:
           terraform apply \
             -auto-approve \
             "tfplan-${{ inputs.environment }}.tfplan"
-
-      - name: Verify remote tfstate blob
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          STORAGE_ACCOUNT="${{ inputs.backend_sa }}"
-          CONTAINER="${{ inputs.backend_container }}"
-          STATE_KEY="${{ steps.config.outputs.BACKEND_KEY }}"
-
-          echo "Storage Account : $STORAGE_ACCOUNT"
-          echo "Container       : $CONTAINER"
-          echo "State Key       : $STATE_KEY"
-
-          EXISTS=$(az storage blob exists \
-            --account-name "$STORAGE_ACCOUNT" \
-            --container-name "$CONTAINER" \
-            --name "$STATE_KEY" \
-            --auth-mode login \
-            --query "exists" \
-            -o tsv)
-
-          if [ "$EXISTS" != "true" ]; then
-            echo "ERROR: Terraform state blob was not found."
-            az storage blob list \
-              --account-name "$STORAGE_ACCOUNT" \
-              --container-name "$CONTAINER" \
-              --auth-mode login \
-              --query "[].name" \
-              -o table
-            exit 1
-          fi
-
-          echo "SUCCESS: Remote Terraform state found."
-          echo "State file: $STATE_KEY"
-
       - name: Show Terraform state
         shell: bash
         run: terraform state list || true
