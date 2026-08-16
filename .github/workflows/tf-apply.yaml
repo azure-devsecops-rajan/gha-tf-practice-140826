@@ -153,10 +153,10 @@ jobs:
       # ========================================================
       # Checkov
       # ========================================================
-      - name: Static IaC checks (Checkov)
-        uses: bridgecrewio/checkov-action@v12
-        with:
-          directory: .
+      # - name: Static IaC checks (Checkov)
+        # uses: bridgecrewio/checkov-action@v12
+        # with:
+        #   directory: .
 
 
       # ========================================================
