@@ -121,8 +121,13 @@ jobs:
             -backend-config="container_name=${{ github.event.inputs.backend_container }}" \
             -backend-config="key=${{ matrix.backend_key }}"
 
-      - name: Setup TFLint
-        uses: terraform-linters/setup-tflint@v1
+      - name: Install TFLint
+        run: |
+          mkdir -p /tmp/tflint && cd /tmp/tflint
+          curl -sL -o tflint.zip "https://github.com/terraform-linters/tflint/releases/latest/download/tflint_linux_amd64.zip"
+          unzip -q tflint.zip
+          sudo mv tflint /usr/local/bin/
+          tflint --version
 
       - name: Run TFLint
         run: |
