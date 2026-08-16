@@ -212,6 +212,19 @@ jobs:
             --auth-mode login \
             -o table
 
+      # ========================================================
+      # Ensure backend container exists (create if missing)
+      # ========================================================
+      - name: Ensure backend container exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          az storage container create \
+            --account-name "${{ inputs.backend_sa }}" \
+            --name "${{ inputs.backend_container }}" \
+            --auth-mode login \
+            --only-show-errors || true
+
 
       # ========================================================
       # Terraform Init
