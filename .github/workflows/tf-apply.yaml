@@ -43,12 +43,6 @@ on:
         type: string
         default: tfstate
 
-      backend_key:
-        description: "Terraform state file key (for example: dev.terraform.tfstate)"
-        required: true
-        type: string
-        default: dev.terraform.tfstate
-
 permissions:
   id-token: write
   contents: read
@@ -75,14 +69,14 @@ jobs:
           TFVARS_SELECTED="${{ github.event.inputs.tfvars_file }}"
 
           case "$ENV_SELECTED" in
-            dev) tfvars="dev.tfvars" ;;
-            prod) tfvars="prod.tfvars" ;;
-            qa) tfvars="qa.tfvars" ;;
-            stage) tfvars="stage.tfvars" ;;
+            dev) tfvars="dev.tfvars"; backend_key="dev.terraform.tfstate" ;;
+            prod) tfvars="prod.tfvars"; backend_key="prod.terraform.tfstate" ;;
+            qa) tfvars="qa.tfvars"; backend_key="qa.terraform.tfstate" ;;
+            stage) tfvars="stage.tfvars"; backend_key="stage.terraform.tfstate" ;;
             *) echo "Unsupported environment: $ENV_SELECTED"; exit 1 ;;
           esac
 
-          JSON="[{\"environment\":\"$ENV_SELECTED\",\"tfvars_file\":\"$tfvars\"}]"
+          JSON="[{\"environment\":\"$ENV_SELECTED\",\"tfvars_file\":\"$tfvars\",\"backend_key\":\"$backend_key\"}]"
           echo "matrix=${JSON}" >> "$GITHUB_OUTPUT"
 
   terraform-apply:
@@ -135,7 +129,7 @@ jobs:
             -backend-config="resource_group_name=${{ github.event.inputs.backend_rg }}" \
             -backend-config="storage_account_name=${{ github.event.inputs.backend_sa }}" \
             -backend-config="container_name=${{ github.event.inputs.backend_container }}" \
-            -backend-config="key=${{ github.event.inputs.backend_key }}"
+            -backend-config="key=${{ matrix.backend_key }}"
 
       - name: Setup TFLint
         uses: terraform-linters/setup-tflint@v1
