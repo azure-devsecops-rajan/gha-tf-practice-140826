@@ -141,3 +141,22 @@ jobs:
       - name: Terraform apply
         run: |
           terraform apply -auto-approve "tfplan-${{ matrix.environment }}.tfplan"
+
+      - name: Verify remote tfstate blob
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Verifying remote tfstate blob '${{ matrix.backend_key }}' in container '${{ github.event.inputs.backend_container }}'..."
+          exists=$(az storage blob exists \
+            --account-name "${{ github.event.inputs.backend_sa }}" \
+            --container-name "${{ github.event.inputs.backend_container }}" \
+            --name "${{ matrix.backend_key }}" \
+            --auth-mode login \
+            --query "exists" -o tsv)
+          echo "exists=$exists"
+          if [ "$exists" != "true" ]; then
+            echo "Remote tfstate blob not found; listing blobs for debug:"
+            az storage blob list --account-name "${{ github.event.inputs.backend_sa }}" --container-name "${{ github.event.inputs.backend_container }}" --auth-mode login --output table || true
+            exit 1
+          fi
+          echo "Remote tfstate blob found."
