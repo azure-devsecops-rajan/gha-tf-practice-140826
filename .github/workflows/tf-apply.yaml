@@ -46,26 +46,31 @@ env:
 
 jobs:
 
-  # ============================================================
-  # Determine environment-specific Terraform configuration
-  # ============================================================
-  set-matrix:
-    name: Build target configuration
-    runs-on: ubuntu-latest
+  terraform-apply:
+    name: Terraform Plan and Apply (${{ inputs.environment }})
 
-    outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
+    runs-on: ubuntu-latest
 
     steps:
 
-      - name: Determine selected environment
-        id: matrix
+      # ========================================================
+      # Checkout
+      # ========================================================
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      # ========================================================
+      # Determine environment configuration
+      # ========================================================
+      - name: Set environment configuration
+        id: config
         shell: bash
         run: |
 
-          ENV_SELECTED="${{ inputs.environment }}"
+          ENV="${{ inputs.environment }}"
 
-          case "$ENV_SELECTED" in
+          case "$ENV" in
 
             dev)
               TFVARS_FILE="dev.tfvars"
@@ -88,68 +93,21 @@ jobs:
               ;;
 
             *)
-              echo "Unsupported environment: $ENV_SELECTED"
+              echo "Unsupported environment: $ENV"
               exit 1
               ;;
 
           esac
 
-          echo "Selected environment : $ENV_SELECTED"
-          echo "Terraform variables  : $TFVARS_FILE"
-          echo "Terraform state key  : $BACKEND_KEY"
-
-          JSON="[{
-            \"environment\":\"$ENV_SELECTED\",
-            \"tfvars_file\":\"$TFVARS_FILE\",
-            \"backend_key\":\"$BACKEND_KEY\"
-          }]"
-
-          echo "matrix=$JSON" >> "$GITHUB_OUTPUT"
-
-
-  # ============================================================
-  # Terraform Plan + Apply
-  # ============================================================
-  terraform-apply:
-    name: Terraform Plan and Apply (${{ matrix.environment }})
-
-    needs: set-matrix
-
-    runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-
-      matrix:
-        include: ${{ fromJSON(needs.set-matrix.outputs.matrix) }}
-
-    steps:
-
-      # ========================================================
-      # Checkout
-      # ========================================================
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-
-      # ========================================================
-      # Display configuration
-      # ========================================================
-      - name: Display Terraform configuration
-        shell: bash
-        run: |
+          echo "TFVARS_FILE=$TFVARS_FILE" >> "$GITHUB_OUTPUT"
+          echo "BACKEND_KEY=$BACKEND_KEY" >> "$GITHUB_OUTPUT"
 
           echo "=========================================="
-          echo "Terraform Configuration"
+          echo "Environment Configuration"
           echo "=========================================="
-
-          echo "Environment      : ${{ matrix.environment }}"
-          echo "TFVars file      : ${{ matrix.tfvars_file }}"
-          echo "Backend RG       : ${{ inputs.backend_rg }}"
-          echo "Backend SA       : ${{ inputs.backend_sa }}"
-          echo "Backend Container: ${{ inputs.backend_container }}"
-          echo "Backend Key      : ${{ matrix.backend_key }}"
-
+          echo "Environment : $ENV"
+          echo "TFVars      : $TFVARS_FILE"
+          echo "Backend Key : $BACKEND_KEY"
           echo "=========================================="
 
 
@@ -179,12 +137,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gitleaks-sarif-${{ matrix.environment }}
+          name: gitleaks-sarif-${{ inputs.environment }}
           path: reports/gitleaks.sarif
 
 
       # ========================================================
-      # Terraform
+      # Setup Terraform
       # ========================================================
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -202,7 +160,7 @@ jobs:
 
 
       # ========================================================
-      # Azure Login using OIDC
+      # Azure Login
       # ========================================================
       - name: Azure Login
         uses: azure/login@v2
@@ -213,7 +171,7 @@ jobs:
 
 
       # ========================================================
-      # Verify Azure identity
+      # Verify Azure Identity
       # ========================================================
       - name: Verify Azure identity
         shell: bash
@@ -231,7 +189,7 @@ jobs:
 
 
       # ========================================================
-      # Verify backend storage access
+      # Verify Backend Storage
       # ========================================================
       - name: Verify backend storage access
         shell: bash
@@ -244,19 +202,15 @@ jobs:
           echo "Resource Group : ${{ inputs.backend_rg }}"
           echo "Storage Account: ${{ inputs.backend_sa }}"
           echo "Container      : ${{ inputs.backend_container }}"
-          echo "State Key      : ${{ matrix.backend_key }}"
+          echo "State Key      : ${{ steps.config.outputs.BACKEND_KEY }}"
 
           echo "=========================================="
-
-          echo "Checking storage container..."
 
           az storage container show \
             --account-name "${{ inputs.backend_sa }}" \
             --name "${{ inputs.backend_container }}" \
             --auth-mode login \
             -o table
-
-          echo "Backend storage access successful."
 
 
       # ========================================================
@@ -270,7 +224,7 @@ jobs:
             -backend-config="resource_group_name=${{ inputs.backend_rg }}" \
             -backend-config="storage_account_name=${{ inputs.backend_sa }}" \
             -backend-config="container_name=${{ inputs.backend_container }}" \
-            -backend-config="key=${{ matrix.backend_key }}" \
+            -backend-config="key=${{ steps.config.outputs.BACKEND_KEY }}" \
             -reconfigure
 
 
@@ -296,7 +250,7 @@ jobs:
 
 
       # ========================================================
-      # TFLint initialization
+      # TFLint Init
       # ========================================================
       - name: Initialize TFLint
         shell: bash
@@ -306,7 +260,7 @@ jobs:
 
 
       # ========================================================
-      # Run TFLint
+      # TFLint
       # ========================================================
       - name: Run TFLint
         shell: bash
@@ -333,8 +287,8 @@ jobs:
         run: |
 
           terraform plan \
-            -var-file="tfvars/${{ matrix.tfvars_file }}" \
-            -out="tfplan-${{ matrix.environment }}.tfplan"
+            -var-file="tfvars/${{ steps.config.outputs.TFVARS_FILE }}" \
+            -out="tfplan-${{ inputs.environment }}.tfplan"
 
 
       # ========================================================
@@ -343,8 +297,8 @@ jobs:
       - name: Upload Terraform Plan
         uses: actions/upload-artifact@v4
         with:
-          name: tfplan-${{ matrix.environment }}
-          path: tfplan-${{ matrix.environment }}.tfplan
+          name: tfplan-${{ inputs.environment }}
+          path: tfplan-${{ inputs.environment }}.tfplan
 
 
       # ========================================================
@@ -356,11 +310,11 @@ jobs:
 
           terraform apply \
             -auto-approve \
-            "tfplan-${{ matrix.environment }}.tfplan"
+            "tfplan-${{ inputs.environment }}.tfplan"
 
 
       # ========================================================
-      # Verify Terraform State
+      # Verify Remote Terraform State
       # ========================================================
       - name: Verify remote tfstate blob
         shell: bash
@@ -370,7 +324,7 @@ jobs:
 
           STORAGE_ACCOUNT="${{ inputs.backend_sa }}"
           CONTAINER="${{ inputs.backend_container }}"
-          STATE_KEY="${{ matrix.backend_key }}"
+          STATE_KEY="${{ steps.config.outputs.BACKEND_KEY }}"
 
           echo "=========================================="
           echo "Terraform State Verification"
@@ -381,8 +335,6 @@ jobs:
           echo "State Key       : $STATE_KEY"
 
           echo "=========================================="
-
-          echo "Checking remote state blob..."
 
           EXISTS=$(az storage blob exists \
             --account-name "$STORAGE_ACCOUNT" \
@@ -400,7 +352,7 @@ jobs:
             echo "ERROR: Terraform state blob was not found."
             echo ""
 
-            echo "Listing blobs in container:"
+            echo "Blobs currently present in container:"
             echo "------------------------------------------"
 
             az storage blob list \
@@ -412,10 +364,6 @@ jobs:
 
             echo "------------------------------------------"
 
-            echo ""
-            echo "Expected state file:"
-            echo "$STATE_KEY"
-
             exit 1
 
           fi
@@ -426,16 +374,14 @@ jobs:
 
 
       # ========================================================
-      # Show Terraform State
+      # Terraform State List
       # ========================================================
-      - name: Show Terraform state information
+      - name: Show Terraform state
         shell: bash
         run: |
 
           echo "=========================================="
-          echo "Terraform State"
+          echo "Terraform Resources in State"
           echo "=========================================="
 
           terraform state list || true
-
-          echo "=========================================="
