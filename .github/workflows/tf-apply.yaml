@@ -14,8 +14,6 @@ on:
           - qa
           - stage
 
-      # tfvars_file is derived from the selected environment
-
       backend_rg:
         description: "Backend resource group name"
         required: true
@@ -40,71 +38,172 @@ permissions:
 
 env:
   TF_CLI_ARGS: "-no-color"
+
   ARM_USE_OIDC: "true"
   ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
   ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
 
 jobs:
+
+  # ============================================================
+  # Determine environment-specific Terraform configuration
+  # ============================================================
   set-matrix:
-    name: Build target matrix
+    name: Build target configuration
     runs-on: ubuntu-latest
+
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+
     steps:
+
       - name: Determine selected environment
         id: matrix
         shell: bash
         run: |
-          ENV_SELECTED="${{ github.event.inputs.environment }}"
+
+          ENV_SELECTED="${{ inputs.environment }}"
 
           case "$ENV_SELECTED" in
-            dev) tfvars="dev.tfvars"; backend_key="dev.terraform.tfstate" ;;
-            prod) tfvars="prod.tfvars"; backend_key="prod.terraform.tfstate" ;;
-            qa) tfvars="qa.tfvars"; backend_key="qa.terraform.tfstate" ;;
-            stage) tfvars="stage.tfvars"; backend_key="stage.terraform.tfstate" ;;
-            *) echo "Unsupported environment: $ENV_SELECTED"; exit 1 ;;
+
+            dev)
+              TFVARS_FILE="dev.tfvars"
+              BACKEND_KEY="dev.terraform.tfstate"
+              ;;
+
+            qa)
+              TFVARS_FILE="qa.tfvars"
+              BACKEND_KEY="qa.terraform.tfstate"
+              ;;
+
+            stage)
+              TFVARS_FILE="stage.tfvars"
+              BACKEND_KEY="stage.terraform.tfstate"
+              ;;
+
+            prod)
+              TFVARS_FILE="prod.tfvars"
+              BACKEND_KEY="prod.terraform.tfstate"
+              ;;
+
+            *)
+              echo "Unsupported environment: $ENV_SELECTED"
+              exit 1
+              ;;
+
           esac
 
-          JSON="[{\"environment\":\"$ENV_SELECTED\",\"tfvars_file\":\"$tfvars\",\"backend_key\":\"$backend_key\"}]"
-          echo "matrix=${JSON}" >> "$GITHUB_OUTPUT"
+          echo "Selected environment : $ENV_SELECTED"
+          echo "Terraform variables  : $TFVARS_FILE"
+          echo "Terraform state key  : $BACKEND_KEY"
 
+          JSON="[{
+            \"environment\":\"$ENV_SELECTED\",
+            \"tfvars_file\":\"$TFVARS_FILE\",
+            \"backend_key\":\"$BACKEND_KEY\"
+          }]"
+
+          echo "matrix=$JSON" >> "$GITHUB_OUTPUT"
+
+
+  # ============================================================
+  # Terraform Plan + Apply
+  # ============================================================
   terraform-apply:
     name: Terraform Plan and Apply (${{ matrix.environment }})
+
     needs: set-matrix
+
     runs-on: ubuntu-latest
+
     strategy:
       fail-fast: false
+
       matrix:
         include: ${{ fromJSON(needs.set-matrix.outputs.matrix) }}
 
     steps:
+
+      # ========================================================
+      # Checkout
+      # ========================================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Scan repository for secrets (gitleaks)
-        run: |
-          mkdir -p reports
-          docker run --rm -v "${{ github.workspace }}":/src ghcr.io/gitleaks/gitleaks:v8.24.2 \
-            dir /src --no-banner --redact --exit-code 1 \
-            --report-format=sarif --report-path=/src/reports/gitleaks.sarif
 
-      - name: Upload gitleaks SARIF
+      # ========================================================
+      # Display configuration
+      # ========================================================
+      - name: Display Terraform configuration
+        shell: bash
+        run: |
+
+          echo "=========================================="
+          echo "Terraform Configuration"
+          echo "=========================================="
+
+          echo "Environment      : ${{ matrix.environment }}"
+          echo "TFVars file      : ${{ matrix.tfvars_file }}"
+          echo "Backend RG       : ${{ inputs.backend_rg }}"
+          echo "Backend SA       : ${{ inputs.backend_sa }}"
+          echo "Backend Container: ${{ inputs.backend_container }}"
+          echo "Backend Key      : ${{ matrix.backend_key }}"
+
+          echo "=========================================="
+
+
+      # ========================================================
+      # Gitleaks
+      # ========================================================
+      - name: Scan repository for secrets (Gitleaks)
+        run: |
+
+          mkdir -p reports
+
+          docker run --rm \
+            -v "${{ github.workspace }}":/src \
+            ghcr.io/gitleaks/gitleaks:v8.24.2 \
+            dir /src \
+            --no-banner \
+            --redact \
+            --exit-code 1 \
+            --report-format=sarif \
+            --report-path=/src/reports/gitleaks.sarif
+
+
+      # ========================================================
+      # Upload Gitleaks report
+      # ========================================================
+      - name: Upload Gitleaks SARIF
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: gitleaks-sarif-${{ matrix.environment }}
           path: reports/gitleaks.sarif
 
+
+      # ========================================================
+      # Terraform
+      # ========================================================
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.6.6
 
+
+      # ========================================================
+      # Checkov
+      # ========================================================
       - name: Static IaC checks (Checkov)
         uses: bridgecrewio/checkov-action@v12
         with:
           directory: .
 
+
+      # ========================================================
+      # Azure Login using OIDC
+      # ========================================================
       - name: Azure Login
         uses: azure/login@v2
         with:
@@ -112,51 +211,231 @@ jobs:
           tenant-id: ${{ secrets.ARM_TENANT_ID }}
           subscription-id: ${{ secrets.ARM_SUBSCRIPTION_ID }}
 
-      - name: Terraform init
+
+      # ========================================================
+      # Verify Azure identity
+      # ========================================================
+      - name: Verify Azure identity
         shell: bash
         run: |
-          terraform init \
-            -backend-config="resource_group_name=${{ github.event.inputs.backend_rg }}" \
-            -backend-config="storage_account_name=${{ github.event.inputs.backend_sa }}" \
-            -backend-config="container_name=${{ github.event.inputs.backend_container }}" \
-            -backend-config="key=${{ matrix.backend_key }}"
 
-      - name: Install TFLint
+          echo "=========================================="
+          echo "Azure Account"
+          echo "=========================================="
+
+          az account show \
+            --query "{Subscription:id,Tenant:tenantId,User:user.name}" \
+            -o table
+
+          echo "=========================================="
+
+
+      # ========================================================
+      # Verify backend storage access
+      # ========================================================
+      - name: Verify backend storage access
+        shell: bash
         run: |
-          mkdir -p /tmp/tflint && cd /tmp/tflint
-          curl -sL -o tflint.zip "https://github.com/terraform-linters/tflint/releases/latest/download/tflint_linux_amd64.zip"
+
+          echo "=========================================="
+          echo "Backend Storage"
+          echo "=========================================="
+
+          echo "Resource Group : ${{ inputs.backend_rg }}"
+          echo "Storage Account: ${{ inputs.backend_sa }}"
+          echo "Container      : ${{ inputs.backend_container }}"
+          echo "State Key      : ${{ matrix.backend_key }}"
+
+          echo "=========================================="
+
+          echo "Checking storage container..."
+
+          az storage container show \
+            --account-name "${{ inputs.backend_sa }}" \
+            --name "${{ inputs.backend_container }}" \
+            --auth-mode login \
+            -o table
+
+          echo "Backend storage access successful."
+
+
+      # ========================================================
+      # Terraform Init
+      # ========================================================
+      - name: Terraform Init
+        shell: bash
+        run: |
+
+          terraform init \
+            -backend-config="resource_group_name=${{ inputs.backend_rg }}" \
+            -backend-config="storage_account_name=${{ inputs.backend_sa }}" \
+            -backend-config="container_name=${{ inputs.backend_container }}" \
+            -backend-config="key=${{ matrix.backend_key }}" \
+            -reconfigure
+
+
+      # ========================================================
+      # Install TFLint
+      # ========================================================
+      - name: Install TFLint
+        shell: bash
+        run: |
+
+          mkdir -p /tmp/tflint
+          cd /tmp/tflint
+
+          curl -sL \
+            -o tflint.zip \
+            "https://github.com/terraform-linters/tflint/releases/latest/download/tflint_linux_amd64.zip"
+
           unzip -q tflint.zip
+
           sudo mv tflint /usr/local/bin/
+
           tflint --version
 
-      - name: Run TFLint
+
+      # ========================================================
+      # TFLint initialization
+      # ========================================================
+      - name: Initialize TFLint
+        shell: bash
         run: |
+
           tflint --init
+
+
+      # ========================================================
+      # Run TFLint
+      # ========================================================
+      - name: Run TFLint
+        shell: bash
+        run: |
+
           tflint
 
-      - name: Terraform plan
-        run: |
-          terraform plan -var-file="tfvars/${{ matrix.tfvars_file }}" -out="tfplan-${{ matrix.environment }}.tfplan"
 
-      - name: Terraform apply
+      # ========================================================
+      # Terraform Validate
+      # ========================================================
+      - name: Terraform Validate
+        shell: bash
         run: |
-          terraform apply -auto-approve "tfplan-${{ matrix.environment }}.tfplan"
 
+          terraform validate
+
+
+      # ========================================================
+      # Terraform Plan
+      # ========================================================
+      - name: Terraform Plan
+        shell: bash
+        run: |
+
+          terraform plan \
+            -var-file="tfvars/${{ matrix.tfvars_file }}" \
+            -out="tfplan-${{ matrix.environment }}.tfplan"
+
+
+      # ========================================================
+      # Upload Terraform Plan
+      # ========================================================
+      - name: Upload Terraform Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ matrix.environment }}
+          path: tfplan-${{ matrix.environment }}.tfplan
+
+
+      # ========================================================
+      # Terraform Apply
+      # ========================================================
+      - name: Terraform Apply
+        shell: bash
+        run: |
+
+          terraform apply \
+            -auto-approve \
+            "tfplan-${{ matrix.environment }}.tfplan"
+
+
+      # ========================================================
+      # Verify Terraform State
+      # ========================================================
       - name: Verify remote tfstate blob
         shell: bash
         run: |
+
           set -euo pipefail
-          echo "Verifying remote tfstate blob '${{ matrix.backend_key }}' in container '${{ github.event.inputs.backend_container }}'..."
-          exists=$(az storage blob exists \
-            --account-name "${{ github.event.inputs.backend_sa }}" \
-            --container-name "${{ github.event.inputs.backend_container }}" \
-            --name "${{ matrix.backend_key }}" \
+
+          STORAGE_ACCOUNT="${{ inputs.backend_sa }}"
+          CONTAINER="${{ inputs.backend_container }}"
+          STATE_KEY="${{ matrix.backend_key }}"
+
+          echo "=========================================="
+          echo "Terraform State Verification"
+          echo "=========================================="
+
+          echo "Storage Account : $STORAGE_ACCOUNT"
+          echo "Container       : $CONTAINER"
+          echo "State Key       : $STATE_KEY"
+
+          echo "=========================================="
+
+          echo "Checking remote state blob..."
+
+          EXISTS=$(az storage blob exists \
+            --account-name "$STORAGE_ACCOUNT" \
+            --container-name "$CONTAINER" \
+            --name "$STATE_KEY" \
             --auth-mode login \
-            --query "exists" -o tsv)
-          echo "exists=$exists"
-          if [ "$exists" != "true" ]; then
-            echo "Remote tfstate blob not found; listing blobs for debug:"
-            az storage blob list --account-name "${{ github.event.inputs.backend_sa }}" --container-name "${{ github.event.inputs.backend_container }}" --auth-mode login --output table || true
+            --query "exists" \
+            -o tsv)
+
+          echo "exists=$EXISTS"
+
+          if [ "$EXISTS" != "true" ]; then
+
+            echo ""
+            echo "ERROR: Terraform state blob was not found."
+            echo ""
+
+            echo "Listing blobs in container:"
+            echo "------------------------------------------"
+
+            az storage blob list \
+              --account-name "$STORAGE_ACCOUNT" \
+              --container-name "$CONTAINER" \
+              --auth-mode login \
+              --query "[].name" \
+              -o table
+
+            echo "------------------------------------------"
+
+            echo ""
+            echo "Expected state file:"
+            echo "$STATE_KEY"
+
             exit 1
+
           fi
-          echo "Remote tfstate blob found."
+
+          echo ""
+          echo "SUCCESS: Remote Terraform state found."
+          echo "State file: $STATE_KEY"
+
+
+      # ========================================================
+      # Show Terraform State
+      # ========================================================
+      - name: Show Terraform state information
+        shell: bash
+        run: |
+
+          echo "=========================================="
+          echo "Terraform State"
+          echo "=========================================="
+
+          terraform state list || true
+
+          echo "=========================================="
